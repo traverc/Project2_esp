@@ -2,7 +2,7 @@
 Ignition system - does not turn off on second press of ignition switch
 Headlight system - implemented with PWM rather than just on/off 
 Only checks for one thresthold, and should test for two to remember
-whether it is nightish or dayish.
+whether it is nightish or dayish. (using button as sensor for first test)
 */
 
 #include "freertos/FreeRTOS.h"
@@ -100,11 +100,13 @@ void headlight_task()
                 ledc_set_duty(LEDC_MODE, LEDC_CHANNEL, LED_OFF); //OFF
                 ledc_update_duty(LEDC_MODE, LEDC_CHANNEL);    
                 printf("Headlights Off %d \n", modeValue);
+                auto_mode = false;
             } else {
                 if (modeValue < 2500) {
-                ledc_set_duty(LEDC_MODE, LEDC_CHANNEL, LED_DIM); //ON
+                ledc_set_duty(LEDC_MODE, LEDC_CHANNEL, LED_BRITE); //ON
                 ledc_update_duty(LEDC_MODE, LEDC_CHANNEL);    
                 printf("Headlights ON %d \n", modeValue);  
+                auto_mode = false;
                 }
                 else {
                     auto_mode = true;                   //Auto
