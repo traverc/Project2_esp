@@ -18,9 +18,10 @@ whether it is nightish or dayish. (using button as sensor for first test)
 // Macros for Project 2 
 #define ADC_WIDTH   ADC_BITWIDTH_12         //Choose 12 bit Analog to Digital Conversion
 #define ADC_ATTEN   ADC_ATTEN_DB_12         //divide by 4 so ADC sees 0- .825V
-#define ADC_LIGHT    ADC_CHANNEL_0           //ADC1_CH0 for the light input
-#define ADC_MODE    ADC_CHANNEL_2           //ADC1_CH2 for the mode input
 #define ADC_UNIT    ADC_UNIT_1
+#define ADC_LIGHT    ADC_CHANNEL_0           //ADC1_CH0 for the light input (GPIO1)
+#define ADC_MODE    ADC_CHANNEL_2           //ADC1_CH2 for the mode input (GPIO3)
+
 
 #define LEDC_TIMER              LEDC_TIMER_0
 #define LEDC_MODE               LEDC_LOW_SPEED_MODE
@@ -33,7 +34,8 @@ whether it is nightish or dayish. (using button as sensor for first test)
 #define LED_OFF                 (0)
 #define LED_DIM                 (4096)
 
-#define NIGHT                   (2048)      //Threshold for the light sensor (would need adjustment)
+#define   DAWN                 (1600)      //Threshold for the light sensor (would need adjustment)
+#define   DUSK                 (2100)      //Threshold for the light sensor (would need adjustment)
 
 // Macros for Project 1 I/O
 //Switches
@@ -57,11 +59,11 @@ static void ledc_init(void);
 void GPIO_init();
 // Function prototype for specifying delays in microseconds
 void delay_ms(int t);
-//Semaphore to let headlight task know that ignition is on
-//SemaphoreHandle_t xBinarySemaphore; //Caused "panic_abort"
-bool engine_started = false;  //Try a simple global instead
 
-void headlight_task() 
+bool engine_started = false;  //Globals for communication between tasks
+bool engine_stopped = false; 
+
+void headlight_task()     
 {
 //Headlight task
     int lightValue, modeValue;
@@ -88,10 +90,9 @@ void headlight_task()
     // Set the LEDC peripheral configuration
     ledc_init();
 
-    // Wait for ignition started semaphore is true
-    //    if (xSemaphoreTake(xBinarySemaphore, portMAX_DELAY) == pdTRUE)
+
         while(1) {
-            if (engine_started)
+            if (engine_started && !engine_stopped)
         {
             printf("Ignition Started in Ignition Task\n");
             //Read mode potentiometer
@@ -117,18 +118,31 @@ void headlight_task()
             if (auto_mode) {
                 //Read light sensor (will be light sensor)
                 adc_oneshot_read(adc1_handle, ADC_LIGHT, &lightValue);
-                if (lightValue < NIGHT) {
+                printf("Light sensor reading: %d \n", lightValue);
+                if (lightValue > DUSK) {
+                    vTaskDelay(1000/portTICK_PERIOD_MS); //1 second delay for ON
+                    printf("Night time %d \n", lightValue);
                     ledc_set_duty(LEDC_MODE, LEDC_CHANNEL, LED_BRITE);
                     ledc_update_duty(LEDC_MODE, LEDC_CHANNEL);    
-                    printf("Night time %d \n", lightValue);
                 } else {
+                    if (lightValue < DAWN) {
+                    vTaskDelay(2000/portTICK_PERIOD_MS); //2 second delay for OFF
+                    printf("Day time %d \n", lightValue); 
                     ledc_set_duty(LEDC_MODE, LEDC_CHANNEL, LED_OFF);
                     ledc_update_duty(LEDC_MODE, LEDC_CHANNEL); 
-                    printf("Day time %d \n", lightValue);   
+                    }
                 }
             }
         }
-        vTaskDelay(10/portTICK_PERIOD_MS); //delay 10 ms to avoid watchdog timer errors
+        else {
+            if (engine_stopped) {
+            printf("Engine stopped \n");
+            ledc_set_duty(LEDC_MODE, LEDC_CHANNEL, LED_OFF);
+            ledc_update_duty(LEDC_MODE, LEDC_CHANNEL);
+            engine_stopped = false; 
+            }
+        }
+        vTaskDelay(500/portTICK_PERIOD_MS); //delay 500 ms to read display
     }
 }
 
@@ -138,9 +152,8 @@ void ignition_enable_task() {
 
   //Declare some variables
     bool IG_enabled = false;
+    bool IG_pressed = false;
     bool System_started = false;
-    bool Attempted = false;
-   
    while (1) {
       //Check for driver in seat to start system
       if (!gpio_get_level(DO)&& !System_started) {
@@ -160,37 +173,46 @@ void ignition_enable_task() {
                 IG_enabled = false;
             }
       //Check for ignition button pressed
-      if (!gpio_get_level(IG)) {
+      if (!gpio_get_level(IG) && !engine_started && !engine_stopped) {
+        IG_pressed = true;
         if (IG_enabled) {
             gpio_set_level(EN_ST, 1); //start engine
             engine_started = true;  //Used to enable headlight system
             gpio_set_level(IG_EN, 0); //turn off ignition enabled
-            printf("Engine Started\n");
-            Attempted = true;
-        }
-        else {
+            printf("Engine Started\n"); 
+            gpio_set_level(BUZZ, 0); 
+        } else {
             gpio_set_level(BUZZ, 1);
             printf("Ignition inhibited\n");
             if(gpio_get_level(DO)) printf("Driver Seat Unoccupied\n");
             if(gpio_get_level(PO)) printf("Passenger Seat Unoccupied\n");
             if(gpio_get_level(DS)) printf("Driver Unbuckled\n");
             if(gpio_get_level(PSB)) printf("Passenger Unbuckled\n");
-            Attempted = true;
         }
       }
-      delay_ms(100);  //loop delay
-      //Removed code for lockout - need to add code to turn off ignition 
-   }
+      delay_ms(20); //wait for switch bounce 
+     //Check for IG release
+      if (gpio_get_level(IG)) IG_pressed = false; //store release
 
+    if (!engine_stopped && !IG_pressed && !gpio_get_level(IG)) {
+           printf("Ignition OFF\n"); 
+           gpio_set_level(EN_ST, 0); //stop engine
+           engine_started = false;
+           engine_stopped = true;
+           System_started = false;
+        }
+      //Removed code for lockout - need to add code to turn off ignition 
+    delay_ms(100);  //loop delay
+   }
 }
 
 void app_main(void)
 {  
-// Create the headlight task
-    xTaskCreate(headlight_task, "Headlight_Task", 2048, NULL, 5, NULL);
-
 // Create the ignition enable task
     xTaskCreate(ignition_enable_task, "Ignition_Enable_Task", 2048, NULL, 5, NULL);
+
+    // Create the headlight task
+    xTaskCreate(headlight_task, "Headlight_Task", 2048, NULL, 5, NULL);
 }
 
 static void ledc_init(void)
