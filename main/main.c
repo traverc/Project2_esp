@@ -1,5 +1,6 @@
 /*Project 2 with some missing functionality 
-Ignition system - does not turn off on second press of ignition switch
+Ignition system - does not turn off on second press of ignition switch, and prints Ignition Started
+over and over.
 Headlight system - implemented with PWM rather than just on/off 
 Only checks for one thresthold, and should test for two to remember
 whether it is nightish or dayish. (using button as sensor for first test)
@@ -94,7 +95,7 @@ void headlight_task()
         while(1) {
             if (engine_started && !engine_stopped)
         {
-            printf("Ignition Started in Ignition Task\n");
+            //printf("Ignition Started in Ignition Task\n");
             //Read mode potentiometer
             adc_oneshot_read(adc1_handle, ADC_MODE, &modeValue);
             if (modeValue < 1000) {
@@ -130,6 +131,9 @@ void headlight_task()
                     printf("Day time %d \n", lightValue); 
                     ledc_set_duty(LEDC_MODE, LEDC_CHANNEL, LED_OFF);
                     ledc_update_duty(LEDC_MODE, LEDC_CHANNEL); 
+                    }
+                    else { 
+                        //keep things the same
                     }
                 }
             }
